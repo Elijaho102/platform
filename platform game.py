@@ -5,6 +5,8 @@ import math
 from os import listdir
 from os.path import isfile, join
 
+from pygame import font
+
 pygame.init()
 
 pygame.display.set_caption('Platform Game')
@@ -15,6 +17,8 @@ FPS = 60
 PLAYER_VEL = 5
 
 window = pygame.display.set_mode((WIDTH, HEIGHT))
+
+
 
 def flip(sprites):
     return [pygame.transform.flip(sprite, True, False) for sprite in sprites]
@@ -170,6 +174,26 @@ class Block(Object):
         self.image.blit(block, (0, 0))
         self.mask = pygame.mask.from_surface(self.image)
 
+class MovingPlatform(Block):
+    def __init__(self, x, y, size, axis='horizontal', range=200, speed=2):
+        super().__init__(x, y, size)
+        self.axis = axis  # 'horizontal' or 'vertical'
+        self.range = range  # Range of movement in pixels
+        self.speed = speed  # Speed of movement
+        self.initial_position = x if axis == 'horizontal' else y
+        self.direction = 1  # 1 for forward, -1 for backward
+
+    def move(self):
+        if self.axis == 'horizontal':
+            self.rect.x += self.speed * self.direction
+            if abs(self.rect.x - self.initial_position) > self.range:
+                self.direction *= -1
+        elif self.axis == 'vertical':
+            self.rect.y += self.speed * self.direction
+            if abs(self.rect.y - self.initial_position) > self.range:
+                self.direction *= -1
+
+
 class Fire(Object):
     ANIMATION_DELAY = 3
 
@@ -213,16 +237,43 @@ def get_background(name):
 
     return tiles, image
 
-def draw(window, background, bg_image, player, objects, offset_x):
+def generate_platforms(block_size, num_platforms, height_range):
+    platforms = []
+    last_x = None
+    for _ in range(num_platforms):
+        while True:  # Keep generating until valid placement
+            x = random.randint(0, WIDTH - block_size)
+            y = random.randint(height_range[0], height_range[1])
+            if last_x is None or abs(x - last_x) > block_size:  # Avoid overlap
+                last_x = x
+                break
+        platforms.append(Block(x, y, block_size))
+    return platforms
+
+
+
+
+def draw(window, background, bg_image, player, objects, offset_x, coin_count, coins, coin_image, font):
     for tile in background:
         window.blit(bg_image, tile)
+
+    for coin in coins:
+        window.blit(coin_image, (coin.x - offset_x, coin.y))
 
     for obj in objects:
         obj.draw(window, offset_x)
 
+    for obj in objects:
+        if isinstance(obj, MovingPlatform):
+            obj.move()
+
     player.draw(window, offset_x)
 
+    coin_text = font.render(f'Coins: {coin_count}', True, (255, 255, 0))
+    window.blit(coin_text, (10, 10))
+
     pygame.display.update()
+
 
 def handle_vertical_collision(player, objects, dy):
     collided_objects = []
@@ -253,6 +304,14 @@ def collide(player, objects, dx):
     return collided_object
 
 
+def handle_coin_collection(player, coins, coin_count):
+    for coin in coins[:]:  
+        if player.rect.colliderect(coin): 
+            coins.remove(coin) 
+            coin_count += 1     
+    return coin_count
+
+
 def handle_move(player, objects):
     keys = pygame.key.get_pressed()
 
@@ -276,24 +335,50 @@ def handle_move(player, objects):
             player.make_hit()
 
 
+import time
+
 def main(window):
+    coin_count = 0
+    font = pygame.font.SysFont('comicsans', 30)
     clock = pygame.time.Clock()
     background, bg_image = get_background('Blue.png')
 
     block_size = 96
-
-    player = Player(10,100, 50, 50)
+    player = Player(10, 100, 50, 50)
     fire = Fire(100, HEIGHT - block_size - 64, 16, 32)
     fire.on()
+
+    # Ground floor blocks
     floor = [Block(i * block_size, HEIGHT - block_size, block_size)
              for i in range(-WIDTH // block_size, (WIDTH * 2) // block_size)]
 
-    objects = [*floor, Block(0, HEIGHT - block_size * 2, block_size),
-               Block(block_size * 3, HEIGHT - block_size * 4, block_size), fire]
+    # Additional platforms
+    platforms = [
+        Block(200, HEIGHT - block_size * 2, block_size),  # Platform 1
+        Block(400, HEIGHT - block_size * 4, block_size),  # Platform 2
+        Block(600, HEIGHT - block_size * 6, block_size),  # Platform 3
+        Block(800, HEIGHT - block_size * 3, block_size),  # Platform 4
+    ]
+
+    moving_platforms = [
+        MovingPlatform(300, HEIGHT - block_size * 3, block_size, axis='horizontal', range=150, speed=3),
+        MovingPlatform(700, HEIGHT - block_size * 5, block_size, axis='vertical', range=100, speed=2),
+    ]
+
+    objects = [*floor, *platforms, *moving_platforms, fire]
+
+
+
+    # Coin setup
+    coin_image = pygame.image.load('C:/Users/elija/PycharmProjects/New platform game/assets/Items/coins/coin_0.png')
+    coins = [pygame.Rect(100, 250, 23, 23)]
 
     offset_x = 0
     scroll_area_width = 200
 
+    # Timer for spawning coins
+    spawn_delay = 5  # in seconds
+    last_spawn_time = time.time()
 
     run = True
     while run:
@@ -308,18 +393,35 @@ def main(window):
                 if event.key == pygame.K_SPACE and player.jump_count < 2:
                     player.jump()
 
+        # Spawn a new coin every `spawn_delay` seconds
+        if time.time() - last_spawn_time > spawn_delay:
+            last_spawn_time = time.time()
+            random_x = random.randint(0, WIDTH - 23)
+            random_y = random.randint(100, HEIGHT - block_size - 23)
+            new_coin = pygame.Rect(random_x, random_y, 23, 23)
+            if not any(new_coin.colliderect(obj.rect) for obj in objects):
+                coins.append(new_coin)
+
+        # Player movement and object logic
         player.loop(FPS)
         fire.loop()
         handle_move(player, objects)
-        draw(window, background, bg_image, player, objects, offset_x)
 
-        if((player.rect.right - offset_x >= WIDTH - scroll_area_width) and player.x_vel > 0) or(
+        # Handle coin collection
+        coin_count = handle_coin_collection(player, coins, coin_count)
+
+        # Draw everything
+        draw(window, background, bg_image, player, objects, offset_x, coin_count, coins, coin_image, font)
+
+        # Adjust scrolling based on player's position
+        if ((player.rect.right - offset_x >= WIDTH - scroll_area_width) and player.x_vel > 0) or (
                 (player.rect.left - offset_x <= scroll_area_width) and player.x_vel < 0):
-                    offset_x += player.x_vel
-
+            offset_x += player.x_vel
 
     pygame.quit()
     quit()
+
+
 
 
 if __name__ == '__main__':
