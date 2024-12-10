@@ -75,6 +75,10 @@ class Player(pygame.sprite.Sprite):
         self.hit = False
         self.hit_count = 0
 
+        self.health = 5
+
+
+
     def jump(self):
         self.y_vel = -self.GRAVITY * 8
         self.animation_count = 0
@@ -155,17 +159,29 @@ class Player(pygame.sprite.Sprite):
         win.blit(self.sprite, (self.rect.x - offset_x, self.rect.y))
 
 class Object(pygame.sprite.Sprite):
-    def __init__(self, x, y, width, height, name=None):
+    def __init__(self, x, y, width, height, name=None, health=0):
         super().__init__()
         self.rect = pygame.Rect(x, y, width, height)
         self.image = pygame.Surface((width, height), pygame.SRCALPHA)
         self.width = width
         self.height = height
         self.name = name
+        self.health = health
+
+    def draw_health(self, win):
+        if self.health > 0:
+            health_bar_x = self.rect.x
+            health_bar_y = self.rect.y - 10
+            health_bar_width = self.health * 10
+            health_bar_height = 5
+
+            pygame.draw.rect(win, (128, 128, 128), (health_bar_x, health_bar_y, 50, health_bar_height))
+            pygame.draw.rect(win, (255, 0, 0), (health_bar_x, health_bar_y, health_bar_width, health_bar_height))
 
 
     def draw(self, win, offset_x):
         win.blit(self.image, (self.rect.x - offset_x, self.rect.y))
+        self.draw_health(win)
 
 class Block(Object):
     def __init__(self, x, y, size):
@@ -177,11 +193,11 @@ class Block(Object):
 class MovingPlatform(Block):
     def __init__(self, x, y, size, axis='horizontal', range=200, speed=2):
         super().__init__(x, y, size)
-        self.axis = axis  # 'horizontal' or 'vertical'
-        self.range = range  # Range of movement in pixels
-        self.speed = speed  # Speed of movement
+        self.axis = axis
+        self.range = range
+        self.speed = speed
         self.initial_position = x if axis == 'horizontal' else y
-        self.direction = 1  # 1 for forward, -1 for backward
+        self.direction = 1
 
     def move(self):
         if self.axis == 'horizontal':
@@ -211,7 +227,7 @@ class Fire(Object):
     def off(self):
         self.animation_name = 'off'
 
-    def loop(self):
+    def loop(self, player):
         sprites = self.fire[self.animation_name]
         sprite_index = (self.animation_count //
                         self.ANIMATION_DELAY) % len(sprites)
@@ -251,6 +267,28 @@ def generate_platforms(block_size, num_platforms, height_range):
     return platforms
 
 
+def reset_game():
+    global coin_count, coins, player, objects, offset_x
+
+    coin_count = 0  # Reset coin count
+    offset_x = 0    # Reset the camera offset
+
+    # Reset player
+    player.health = 5
+    player.rect.x = 10
+    player.rect.y = 100
+    player.x_vel = 0
+    player.y_vel = 0
+
+    # Reset coins
+    coins = [pygame.Rect(100, 250, 23, 23)]
+
+    # Reset other objects (if needed)
+    for obj in objects:
+        if isinstance(obj, Fire):
+            obj.off()
+
+
 
 
 def draw(window, background, bg_image, player, objects, offset_x, coin_count, coins, coin_image, font):
@@ -269,10 +307,26 @@ def draw(window, background, bg_image, player, objects, offset_x, coin_count, co
 
     player.draw(window, offset_x)
 
+
+    max_health = 5
+    health_bar_width = 200
+    health_bar_height = 20
+    health_bar_x = WIDTH - health_bar_width - 20
+    health_bar_y = 20
+
+    pygame.draw.rect(window, (128, 128, 128), (health_bar_x, health_bar_y, health_bar_width, health_bar_height))
+
+
+    current_health_width = (player.health / max_health) * health_bar_width
+    pygame.draw.rect(window, (255, 0, 0), (health_bar_x, health_bar_y, current_health_width, health_bar_height))
+
+
     coin_text = font.render(f'Coins: {coin_count}', True, (255, 255, 0))
     window.blit(coin_text, (10, 10))
 
     pygame.display.update()
+
+
 
 
 def handle_vertical_collision(player, objects, dy):
@@ -305,10 +359,10 @@ def collide(player, objects, dx):
 
 
 def handle_coin_collection(player, coins, coin_count):
-    for coin in coins[:]:  
-        if player.rect.colliderect(coin): 
-            coins.remove(coin) 
-            coin_count += 1     
+    for coin in coins[:]:
+        if player.rect.colliderect(coin):
+            coins.remove(coin)
+            coin_count += 1
     return coin_count
 
 
@@ -329,10 +383,9 @@ def handle_move(player, objects):
     for obj in to_check:
         if obj and obj.name == 'fire':
             player.make_hit()
+            player.health -= 1
 
-    for obj in to_check:
-        if obj and obj.name == 'fire':
-            player.make_hit()
+    return player
 
 
 import time
@@ -346,9 +399,10 @@ def main(window):
     block_size = 96
     player = Player(10, 100, 50, 50)
     fire = Fire(100, HEIGHT - block_size - 64, 16, 32)
+    fire.name = 'fire'
     fire.on()
 
-    # Ground floor blocks
+
     floor = [Block(i * block_size, HEIGHT - block_size, block_size)
              for i in range(-WIDTH // block_size, (WIDTH * 2) // block_size)]
 
@@ -377,7 +431,7 @@ def main(window):
     scroll_area_width = 200
 
     # Timer for spawning coins
-    spawn_delay = 5  # in seconds
+    spawn_delay = 3  # in seconds
     last_spawn_time = time.time()
 
     run = True
@@ -393,7 +447,7 @@ def main(window):
                 if event.key == pygame.K_SPACE and player.jump_count < 2:
                     player.jump()
 
-        # Spawn a new coin every `spawn_delay` seconds
+
         if time.time() - last_spawn_time > spawn_delay:
             last_spawn_time = time.time()
             random_x = random.randint(0, WIDTH - 23)
@@ -402,26 +456,31 @@ def main(window):
             if not any(new_coin.colliderect(obj.rect) for obj in objects):
                 coins.append(new_coin)
 
-        # Player movement and object logic
+
         player.loop(FPS)
-        fire.loop()
+        fire.loop(player)
         handle_move(player, objects)
 
-        # Handle coin collection
+
         coin_count = handle_coin_collection(player, coins, coin_count)
 
-        # Draw everything
+
         draw(window, background, bg_image, player, objects, offset_x, coin_count, coins, coin_image, font)
 
-        # Adjust scrolling based on player's position
+        if player.health <= 0:
+            reset_game()
+
+
         if ((player.rect.right - offset_x >= WIDTH - scroll_area_width) and player.x_vel > 0) or (
                 (player.rect.left - offset_x <= scroll_area_width) and player.x_vel < 0):
             offset_x += player.x_vel
 
-    pygame.quit()
-    quit()
-
-
+        if coin_count >= 20:
+            win_message = font.render('Next Stage', True, (0, 255, 0))
+            window.blit(win_message, (WIDTH // 2 - win_message.get_width() // 2, HEIGHT // 2))
+            pygame.display.update()
+            pygame.time.delay(3000)
+            run = False
 
 
 if __name__ == '__main__':
